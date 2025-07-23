@@ -66,7 +66,7 @@ app.post('/api/guests', (req, res) => {
     const uuid = uuidv4();
 
     db.query(
-        'INSERT INTO stg.guestinfo (uuid, Name, Email, Company, Phone_No, Allergies) VALUES (?, ?, ?, ?, ?, ?)',
+        'INSERT INTO guestinfo (uuid, Name, Email, Company, Phone_No, Allergies) VALUES (?, ?, ?, ?, ?, ?)',
         [uuid, name, email, company, phone, allergies],
         (err, result) => {
             if (err) {
@@ -82,7 +82,7 @@ app.post('/api/checkin/:uuid', (req, res) => {
     const { uuid } = req.params;
 
     db.query(
-        'UPDATE stg.guestinfo SET checked_in = TRUE, checked_in_time = NOW() WHERE uuid = ? AND checked_in = FALSE',
+        'UPDATE guestinfo SET checked_in = "TRUE", checked_in_time = NOW() WHERE uuid = ? AND checked_in = "FALSE"',
         [uuid],
         (err, result) => {
             if (err) {
@@ -96,7 +96,7 @@ app.post('/api/checkin/:uuid', (req, res) => {
             }
 
             // Get guest details
-            db.query('SELECT * FROM stg.guestinfo WHERE uuid = ?', [uuid], (err, results) => {
+            db.query('SELECT uuid, Name as name, Company as company FROM guestinfo WHERE uuid = ?', [uuid], (err, results) => {
                 if (err) {
                     res.status(500).json({ error: err.message });
                     return;
