@@ -9,6 +9,7 @@ import { Button } from 'primereact/button';
 import { Toast } from 'primereact/toast';
 import { InputText } from 'primereact/inputtext';
 import { Tag } from 'primereact/tag';
+import { Dropdown } from 'primereact/dropdown';
 
 // Check-in Dialog Component
 function CheckInDialog({ visible, onHide, onCheckIn }) {
@@ -64,8 +65,10 @@ function AdminPage() {
     const toast = useRef(null);
     const [checkInDialogVisible, setCheckInDialogVisible] = useState(false);
     const [guests, setGuests] = useState([]);
+    const [statuses] = useState(['TRUE', 'FALSE']);
 
-// Function to get severity based on checked_in value
+// Component to get severity based on checked_in value
+// ==============================================================
     const getSeverity = (value) => {
         switch (value) {
             case 'TRUE':
@@ -82,6 +85,77 @@ function AdminPage() {
         return <Tag value={rowData.checked_in} severity={getSeverity(rowData.checked_in)}></Tag>;
     };
 // ==============================================================
+
+// Component to edit table data
+// ==============================================================
+    const onRowEditComplete = async (e) => {
+    try {
+        console.log('Updating guest:', e.newData);
+        console.log('UUID:', e.newData.uuid);
+        console.log('New status:', e.newData.checked_in);
+        
+        // เรียก API เพื่ออัพเดตข้อมูล
+        const response = await api.put(`/guests/${e.newData.uuid}`, {
+            checked_in: e.newData.checked_in
+        });
+        
+        console.log('Update response:', response.data);
+        
+        // อัพเดต state
+        let _guests = [...guests];
+        _guests[e.index] = e.newData;
+        setGuests(_guests);
+        
+        // Refresh guest list เพื่อให้ข้อมูลเวลาอัพเดต
+        fetchGuests();
+        
+        // แสดง toast message ที่แตกต่างกันตามสถานะ
+        if (e.newData.checked_in === 'TRUE') {
+            toast.current.show({
+                severity: 'success',
+                summary: 'Manual Check-in Success',
+                detail: response.data.guest ? 
+                    `${response.data.guest.name} from ${response.data.guest.company} checked in manually` :
+                    'Guest checked in manually',
+                life: 5000
+            });
+        } else {
+            toast.current.show({
+                severity: 'info',
+                summary: 'Status Updated',
+                detail: 'Guest status updated to not checked in',
+                life: 3000
+            });
+        }
+        
+    } catch (error) {
+        console.error('Error updating guest:', error);
+        console.error('Error response:', error.response?.data);
+        toast.current.show({
+            severity: 'error',
+            summary: 'Error',
+            detail: error.response?.data?.message || 'Failed to update guest status'
+        });
+    }
+};
+
+    const statusEditor = (options) => {
+        return (
+            <Dropdown
+                value={options.value}
+                options={statuses}
+                onChange={(e) => options.editorCallback(e.value)}
+                placeholder="Select a Status"
+                itemTemplate={(option) => {
+                    return <Tag value={option} severity={getSeverity(option)}></Tag>;
+                }}
+            />
+        );
+    };
+
+    const allowEdit = (rowData) => {
+        return rowData.name !== 'Blue Band';
+    };
 
     const [stats, setStats] = useState({
         total: 0,
@@ -105,7 +179,7 @@ function AdminPage() {
                 toast.current.show({
                     severity: 'success',
                     summary: 'Check-in Success',
-                    detail: `${response.data.Name} from ${response.data.Company}`,
+                    detail: `${response.data.name} from ${response.data.company}`,
                     life: 5000
                 });
                 // Refresh guest list
@@ -154,7 +228,13 @@ function AdminPage() {
     const handleAddGuest = async (e) => {
         e.preventDefault();
         try {
+            console.log('Adding new guest:', newGuest);
+            
             const { data } = await api.post('/guests', newGuest);
+            
+            console.log('Guest added successfully:', data);
+            
+            // ล้างฟอร์ม
             setNewGuest({ 
                 name: '', 
                 email: '', 
@@ -162,10 +242,31 @@ function AdminPage() {
                 phone: '', 
                 allergies: '' 
             });
+            
+            // Refresh guest list
             fetchGuests();
+            
+            // แสดง toast success
+            toast.current.show({
+                severity: 'success',
+                summary: 'Guest Added',
+                detail: `${newGuest.name} has been added successfully`,
+                life: 3000
+            });
+            
             setError('');
         } catch (error) {
             console.error('Error adding guest:', error);
+            console.error('Error response:', error.response?.data);
+            
+            // แสดง toast error
+            toast.current.show({
+                severity: 'error',
+                summary: 'Error',
+                detail: error.response?.data?.error || 'Failed to add guest. Please try again.',
+                life: 5000
+            });
+            
             setError('Failed to add guest. Please try again.');
         }
     };
@@ -203,6 +304,10 @@ function AdminPage() {
                     <h2 className="text-xl font-bold mb-2">Checked In</h2>
                     <p className="text-3xl">{stats.checkedIn}</p>
                 </div>
+                <div className="bg-white rounded-lg shadow p-4">
+                    <h2 className="text-xl font-bold mb-2">Remaining</h2>
+                    <p className="text-3xl">{stats.total - stats.checkedIn}</p>
+                </div>
             </div>
 
            {/* Guest List and Add Guest Form =============================================== */}
@@ -210,15 +315,23 @@ function AdminPage() {
 
 <TabView>
     <TabPanel header="List">
-        <DataTable value={guests} tableStyle={{ minWidth: '50rem' }}>
+        <DataTable value={guests} editMode="row" dataKey="uuid" onRowEditComplete={onRowEditComplete} tableStyle={{ minWidth: '50rem' }}>
             {/* <Column field="uuid" header="UUID"></Column> */}
             <Column field="name" header="Name"></Column>
             <Column field="email" header="Email"></Column>
             <Column field="company" header="Company"></Column>
             <Column field="phone" header="Phone"></Column>
             <Column field="allergies" header="Allergies"></Column>
-            <Column body={statusBodyTemplate} header="Checked In"></Column>
-            <Column field="checked_in_time" header="Checked In Time" ></Column>
+            <Column 
+                field="checked_in" 
+                body={statusBodyTemplate} 
+                header="Checked In" 
+                sortable 
+                sortField="checked_in"
+                editor={(options) => statusEditor(options)}
+            ></Column>
+            <Column field="checked_in_time" header="Checked In Time" sortable></Column>
+            <Column header="Edit" rowEditor={allowEdit} headerStyle={{ width: '10%', minWidth: '8rem' }} bodyStyle={{ textAlign: 'center' }}></Column>
         </DataTable>
 
     </TabPanel>
@@ -273,12 +386,12 @@ function AdminPage() {
                             rows="3"
                         />
                     </div>
-                    <button
+                    <Button
                         type="submit"
-                        className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-                    >
-                        Add Guest
-                    </button>
+                        label="Add Guest"
+                        icon="pi pi-plus"
+                        className="p-button-success"
+                    />
                 </form>
             </div>
     </TabPanel>
