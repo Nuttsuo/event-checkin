@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import galaLogo from '../assets/GalaDinner.png';
+import centum50 from '../assets/centum50th.png';
 import io from 'socket.io-client';
 import { Toast } from 'primereact/toast';
 
@@ -9,7 +10,8 @@ function LandingPage() {
     const toast = useRef(null);
     const [toastStack, setToastStack] = useState([]); // เก็บ stack ของ toasts
     const MAX_STACK = 4; // จำนวน popup สูงสุดที่จะแสดง
-    const POPUP_DURATION = 3000; // ระยะเวลาแสดง popup (5 วินาที)
+    const POPUP_DURATION = 5000; // ระยะเวลาแสดง popup (5 วินาที)
+
 
     const showGuestToast = (guest) => {
         const newToast = {
@@ -28,23 +30,25 @@ function LandingPage() {
 
         toast.current.show({
             // className: 'bg-transparent border-none shadow-none',
-            // sticky: true, // ทำให้ toast ค้างอยู่
+            //  sticky: true, // ทำให้ toast ค้างอยู่
             life: POPUP_DURATION, // หรือใช้ sticky แทนถ้าต้องการ
             content: (
                 <div className="transform transition-all duration-300 scale-100">
-                    <div className="bg-gradient-to-b from-white/65 to-black/10 rounded-2xl p-12 shadow-2xl border border-white/20 ">
-                        <div className="text-center space-y-6">
-                            <div className="text-white space-y-2">
-                                <p className="text-2xl font-light">Welcome</p>
-                                <h2 className="text-5xl font-bold tracking-wide">
-                                    {guest.Name || guest.name}
-                                </h2>
-                            </div>
-                            <div className="text-white/90 space-y-2">
-                                <p className="text-xl">from</p>
-                                <p className="text-2xl font-semibold">
-                                    {guest.Company || guest.company}
-                                </p>
+                    <div className="bg-gradient-to-r from-slate-700/70 via-slate-900/50 to-slate-950/30 rounded-2xl px-16 py-10 shadow-2xl border border-white/30 backdrop-blur-sm w-[600px] max-w-[90vw]">
+                        <div className="text-center space-y-5">
+                            <div className="text-white space-y-3">
+                                <p className="text-2xl font-light">Welcome !</p>
+                                <div className="w-full">
+                                    <h2 className="text-4xl font-bold tracking-wide break-words leading-tight">
+                                        {(guest.Name || guest.name)}
+                                    </h2>
+                                </div>
+                                <p className="text-lg text-white/90">from</p>
+                                <div className="w-full">
+                                    <p className="text-xl font-semibold text-white/90 break-words leading-relaxed">
+                                        {(guest.Company || guest.company)}
+                                    </p>
+                                </div>
                             </div>
                             <div className="pt-4">
                                 <p className="text-2xl text-white font-light">
@@ -77,6 +81,8 @@ function LandingPage() {
         return () => socket.disconnect();
     }, []);
 
+    // Comment Vanta.js ไว้ชั่วคราว เพราะกิน resources เยอะเมื่อต่อจอใหญ่
+    
         // background effect
     useEffect(() => {
         const loadVanta = async () => {
@@ -96,7 +102,7 @@ function LandingPage() {
                     color: 0x0b2134,
                     shininess: 60,
                     waveHeight: 12,
-                    waveSpeed: 1.3,
+                    waveSpeed: 0.9,
                     zoom: 0.65,
                 });
             }
@@ -108,6 +114,7 @@ function LandingPage() {
             if (effectRef.current) effectRef.current.destroy();
         };
     }, []);
+    
 
     function loadScript(src) {
         return new Promise((resolve, reject) => {
@@ -144,14 +151,28 @@ function LandingPage() {
     return (
         <>
             {/* Test Button */}
-            <button
+            {/* <button
                 onClick={testPopup}
                 className="fixed top-4 right-4 bg-black/10 hover:bg-black/20 text-white/50 px-3 py-1 rounded text-sm "
                 style={{ zIndex: 80 }}
             >
                 Test Popup
-            </button>
+            </button> */}
 
+            {/* Static Background - แทน Vanta.js ชั่วคราว */}
+            {/* <div
+                style={{
+                    position: 'absolute',
+                    width: '100vw',
+                    height: '100vh',
+                    top: 0,
+                    left: 0,
+                    zIndex: -1,
+                    background: 'linear-gradient(135deg, #0b2134 0%, #1a365d 25%, #2d4a5c 50%, #1a365d 75%, #0b2134 100%)',
+                }}
+            /> */}
+            
+            {/* Comment Vanta.js div ไว้ชั่วคราว */}
             <div
                 ref={vantaRef}
                 style={{
@@ -163,10 +184,11 @@ function LandingPage() {
                     zIndex: -1,
                 }}
             />
-            <div className="min-h-screen flex flex-col items-center justify-center p-4">
-                <div className="bg-white/10 backdrop-blur-sm rounded-xl p-8 shadow-2xl w-full max-w-4xl">
-                    <div className="flex flex-col items-center space-y-8">
-                        <div className="w-full max-w-2xl">
+            {/* Main Logo */}
+            <div className="min-h-screen flex flex-col items-center justify-between p-4 zindex-10">
+
+                <div className="mb-[5rem] flex flex-col items-center space-y-8">
+                        <div className="w-full max-w-[65%]">
                             <img 
                                 src={galaLogo} 
                                 className="w-full" 
@@ -176,20 +198,27 @@ function LandingPage() {
                         </div>
                         
                         <div className="text-center text-white">
-                            <h1 className="text-5xl font-bold mb-4">GALA DINNER 2025</h1>
-                            <h2 className="text-3xl font-light mb-6">50th Anniversary Celebration</h2>
-                            <div className="text-xl">
+                            {/* <h1 className="text-5xl font-bold mb-4">GALA DINNER 2025</h1> */}
+                            <h2 className="text-5xl font-bold mb-4">50th Anniversary Celebration</h2>
+                            <div className="text-2xl font-bold">
                                 <p className="mb-2">Grand Ballroom 2 & 3, Holliday Inn & Suites Rayong City Centre</p>
-                                <p>5.00 PM - 10.00 PM</p>
+                                <p>21 August 2025 5.00 PM - 10.00 PM</p>
                             </div>
                         </div>
-                    </div>
                 </div>
+                <div className="mt-5 w-full max-w-[80%]">
+                    <img 
+                        src={centum50} 
+                        className="w-full" 
+                        style={{filter: 'drop-shadow(0 0 20px rgba(81, 66, 7, 1))'}} 
+                        alt="Centum 50th Logo" 
+                    />
+                </div>
+                
             </div>
             
             {/* Toast Container */}
             <Toast 
-                
                 ref={toast} 
                 position="center"
                 style={{
@@ -222,6 +251,37 @@ function LandingPage() {
                     }
                     .p-toast .p-toast-icon-close {
                         display: none;
+                    }
+                    
+                    @keyframes slideInLeft {
+                    from {
+                        transform: translateX(-100%);
+                        opacity: 0;
+                    }
+                    to {
+                        transform: translateX(-20%);
+                        opacity: 1;
+                    }
+                    }
+
+                    @keyframes slideOutLeft {
+                    from {
+                        transform: translateX(0);
+                        opacity: 1;
+                    }
+                    to {
+                        transform: translateX(-100%);
+                        opacity: 0;
+                    }
+                    }
+
+                    /* Override Toast animation */
+                    .p-toast-message {
+                    animation: slideInLeft 0.3s ease-out forwards;
+                    }
+
+                    .p-toast-message-leave {
+                    animation: slideOutLeft 0.3s ease-in forwards !important;
                     }
                 `}
             </style>

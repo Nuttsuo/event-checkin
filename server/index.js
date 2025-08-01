@@ -173,6 +173,33 @@ app.put('/api/guests/:uuid', (req, res) => {
     );
 });
 
+// Delete guest endpoint
+app.delete('/api/guests/:uuid', (req, res) => {
+    const { uuid } = req.params;
+
+    db.query(
+        'DELETE FROM guestinfo WHERE uuid = ?',
+        [uuid],
+        (err, result) => {
+            if (err) {
+                console.error('Error deleting guest:', err);
+                res.status(500).json({ error: 'Failed to delete guest' });
+                return;
+            }
+
+            if (result.affectedRows === 0) {
+                res.status(404).json({ error: 'Guest not found' });
+                return;
+            }
+
+            res.json({ 
+                message: 'Guest deleted successfully',
+                deletedRows: result.affectedRows 
+            });
+        }
+    );
+});
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
     console.log('Client connected');
