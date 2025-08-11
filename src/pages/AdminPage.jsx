@@ -85,6 +85,24 @@ function AdminPage() {
         checked_in: { value: null, matchMode: FilterMatchMode.EQUALS },
         allergies: { value: null, matchMode: FilterMatchMode.CONTAINS }
     });
+    const [stats, setStats] = useState({
+        total: 0,
+        checkedIn: 0
+    });
+    const [newGuest, setNewGuest] = useState({
+        name: '',
+        email: '',
+        company: '',
+        phone: '',
+        allergies: ''
+    });
+    const [error, setError] = useState('');
+    const [tableKey, setTableKey] = useState(0); // เพิ่ม key สำหรับ force re-render
+
+    // Force update table เฉพาะเมื่อจำเป็น
+    const forceUpdateTable = () => {
+        setTableKey(prev => prev + 1);
+    };
 
 //#region // ฟังก์ชันสำหรับจัดการการกรอง global filter 
     const onGlobalFilterChange = (e) => {
@@ -207,19 +225,19 @@ function AdminPage() {
     };
 
     const statusEditor = (options) => {
-        console.log('statusEditor - options:', options);
-        console.log('statusEditor - current value:', options.value);
-        console.log('statusEditor - rowData:', options.rowData);
+        // console.log('statusEditor - options:', options);
+        // console.log('statusEditor - current value:', options.value);
+        // console.log('statusEditor - rowData:', options.rowData);
         
         return (
             <Dropdown
                 value={options.value}
                 options={statuses}
                 onChange={(e) => {
-                    console.log('statusEditor - onChange triggered');
-                    console.log('statusEditor - old value:', options.value);
-                    console.log('statusEditor - new value:', e.value);
-                    console.log('statusEditor - rowData:', options.rowData);
+                    // console.log('statusEditor - onChange triggered');
+                    // console.log('statusEditor - old value:', options.value);
+                    // console.log('statusEditor - new value:', e.value);
+                    // console.log('statusEditor - rowData:', options.rowData);
                     
                     // เรียก editorCallback ก่อน
                     options.editorCallback(e.value);
@@ -231,7 +249,7 @@ function AdminPage() {
                         checked_in: e.value
                     };
                     
-                    console.log('statusEditor - saving to editingData:', updatedData);
+                    // console.log('statusEditor - saving to editingData:', updatedData);
                     
                     // เก็บใน state และ ref
                     setEditingData(prev => {
@@ -239,13 +257,13 @@ function AdminPage() {
                             ...prev,
                             [rowData.uuid]: updatedData
                         };
-                        console.log('statusEditor - prev editingData:', prev);
-                        console.log('statusEditor - new editingData:', newEditingData);
-                        console.log('statusEditor - rowData.uuid:', rowData.uuid);
+                        // console.log('statusEditor - prev editingData:', prev);
+                        // console.log('statusEditor - new editingData:', newEditingData);
+                        // console.log('statusEditor - rowData.uuid:', rowData.uuid);
                         
                         // เก็บใน ref ด้วย
                         editingDataRef.current = newEditingData;
-                        console.log('statusEditor - editingDataRef.current:', editingDataRef.current);
+                        // console.log('statusEditor - editingDataRef.current:', editingDataRef.current);
                         
                         return newEditingData;
                     });
@@ -260,7 +278,7 @@ function AdminPage() {
 
 
     // Custom row editor template with delete button
-    const isEdit = React.useCallback((rowData) => {
+    const isEdit = (rowData) => {
         const isActive = activeActionRow === rowData.uuid;
         const isEditing = editingRows[rowData.uuid];
         
@@ -277,6 +295,7 @@ function AdminPage() {
                             let _editingRows = { ...editingRows };
                             _editingRows[rowData.uuid] = true;
                             setEditingRows(_editingRows);
+                            forceUpdateTable(); // บังคับ re-render เมื่อเข้าสู่ edit mode
                         }}
                     />
                     <Button rounded
@@ -294,6 +313,7 @@ function AdminPage() {
                         onClick={() => {
                             console.log('Cancel button clicked for:', rowData.name);
                             setActiveActionRow(null);
+                            forceUpdateTable(); // บังคับ re-render เมื่อปิด action buttons
                         }}
                     />
                 </div>
@@ -306,22 +326,22 @@ function AdminPage() {
                         icon="pi pi-check"
                         className="p-button-rounded p-button-sm p-button-success" 
                         onClick={() => {
-                            console.log('=== SAVE BUTTON CLICKED ===');
-                            console.log('Save button clicked for:', rowData.name);
-                            console.log('rowData.uuid:', rowData.uuid);
-                            console.log('Current editingData state:', editingData);
-                            console.log('Current editingDataRef.current:', editingDataRef.current);
-                            console.log('editingData for this row (state):', editingData[rowData.uuid]);
-                            console.log('editingData for this row (ref):', editingDataRef.current[rowData.uuid]);
-                            console.log('Original rowData:', rowData);
+                            // console.log('=== SAVE BUTTON CLICKED ===');
+                            // console.log('Save button clicked for:', rowData.name);
+                            // console.log('rowData.uuid:', rowData.uuid);
+                            // console.log('Current editingData state:', editingData);
+                            // console.log('Current editingDataRef.current:', editingDataRef.current);
+                            // console.log('editingData for this row (state):', editingData[rowData.uuid]);
+                            // console.log('editingData for this row (ref):', editingDataRef.current[rowData.uuid]);
+                            // console.log('Original rowData:', rowData);
                             
                             // ใช้ข้อมูลจาก ref ก่อน แล้วค่อย fallback ไป state
                             const updatedData = editingDataRef.current[rowData.uuid] || editingData[rowData.uuid] || rowData;
                             const index = guests.findIndex(g => g.uuid === rowData.uuid);
                             
-                            console.log('Final data to save:', updatedData);
-                            console.log('Comparison - original checked_in:', rowData.checked_in);
-                            console.log('Comparison - new checked_in:', updatedData.checked_in);
+                            // console.log('Final data to save:', updatedData);
+                            // console.log('Comparison - original checked_in:', rowData.checked_in);
+                            // console.log('Comparison - new checked_in:', updatedData.checked_in);
                             
                             // เรียก onRowEditComplete กับข้อมูลที่แก้ไขแล้ว
                             onRowEditComplete({
@@ -354,6 +374,7 @@ function AdminPage() {
                             
                             // ล้าง ref ด้วย
                             delete editingDataRef.current[rowData.uuid];
+                            forceUpdateTable(); // บังคับ re-render เมื่อ cancel edit
                         }}
                         tooltip="Cancel"
                     />
@@ -369,26 +390,14 @@ function AdminPage() {
                         onClick={() => {
                             console.log('Settings button clicked for:', rowData.name);
                             setActiveActionRow(rowData.uuid);
+                            forceUpdateTable(); // บังคับ re-render เมื่อเปิด action buttons
                         }}
                         tooltip="Actions"
                     />
                 </div>
             );
         }
-    }, [activeActionRow, editingRows, editingData]);
-
-    const [stats, setStats] = useState({
-        total: 0,
-        checkedIn: 0
-    });
-    const [newGuest, setNewGuest] = useState({
-        name: '',
-        email: '',
-        company: '',
-        phone: '',
-        allergies: ''
-    });
-    const [error, setError] = useState('');
+    };
 
     const handleScan = async (uuid) => {
         try {
@@ -599,7 +608,7 @@ function AdminPage() {
             emptyMessage="No guests found."
             tableStyle={{ minWidth: '100%', width: '100%'}}
             style={{ width: '100%' }}
-            key={`datatable-${activeActionRow || 'none'}`}
+            key={tableKey}
         >
             {/* <Column field="uuid" header="UUID"></Column> */}
             <Column field="name" header="Name" style={{ minWidth: '200px' }} frozen className="font-bold"></Column>

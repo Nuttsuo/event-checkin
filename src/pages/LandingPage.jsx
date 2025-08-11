@@ -29,12 +29,12 @@ function LandingPage() {
         });
 
         toast.current.show({
-            // className: 'bg-transparent border-none shadow-none',
-            //  sticky: true, // ทำให้ toast ค้างอยู่
-            life: POPUP_DURATION, // หรือใช้ sticky แทนถ้าต้องการ
+            className: 'bg-transparent border-none shadow-none',
+             sticky: true, // ทำให้ toast ค้างอยู่
+            // life: POPUP_DURATION, // หรือใช้ sticky แทนถ้าต้องการ
             content: (
-                <div className="transform transition-all duration-300 scale-100">
-                    <div className="bg-gradient-to-r from-slate-700/70 via-slate-900/50 to-slate-950/30 rounded-2xl px-16 py-10 shadow-2xl border border-white/30 backdrop-blur-sm w-[600px] max-w-[90vw]">
+                <div className=" transform transition-all scale-100 w-full">
+                    <div className="bg-slate-700/80 backdrop-filter-sm rounded-2xl px-16 py-10 shadow-2xl border border-white/30  w-[550px] max-w-[90vw]">
                         <div className="text-center space-y-5">
                             <div className="text-white space-y-3">
                                 <p className="text-2xl font-light">Welcome !</p>
@@ -234,22 +234,14 @@ function LandingPage() {
                     .p-toast {
                         opacity: 1 !important;
                     }
-                    .p-toast .p-toast-message {
-                        margin: 0;
-                        padding: 0;
-                        border: none;
-                        background: transparent;
-                        box-shadow: none;
-                        border-radius: 0;
+                    
+                    .p-toast-message{
+                    backdrop-filter: none;
+                    box-shadow: none;
                     }
-                    .p-toast .p-toast-message-content {
-                        padding: 0;
-                        background: transparent;
-                    }
-                    .p-toast .p-toast-message-custom {
-                        background: transparent;
-                    }
-                    .p-toast .p-toast-icon-close {
+                    
+                                        
+                    .p-toast-icon-close {
                         display: none;
                     }
                     

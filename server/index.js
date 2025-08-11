@@ -84,7 +84,7 @@ app.post('/api/checkin/:uuid', (req, res) => {
     const { uuid } = req.params;
 
     db.query(
-        'UPDATE guestinfo SET checked_in = "TRUE", checked_in_time = DATE_FORMAT(NOW(), "%H:%i:%s") WHERE uuid = ? AND checked_in = "FALSE"',
+        'UPDATE guestinfo SET checked_in = "TRUE", checked_in_time = DATE_FORMAT(NOW(), "%d-%m-%Y %H:%i") WHERE uuid = ? AND checked_in = "FALSE"',
         [uuid],
         (err, result) => {
             if (err) {
@@ -122,8 +122,8 @@ app.put('/api/guests/:uuid', (req, res) => {
     // กำหนดค่า checked_in_time ตามสถานะ
     let timeQuery;
     if (checked_in === 'TRUE') {
-        // ถ้าเปลี่ยนเป็น TRUE ให้ stamp เวลาใหม่
-        timeQuery = 'UPDATE guestinfo SET checked_in = ?, checked_in_time = DATE_FORMAT(NOW(), "%H:%i:%s") WHERE uuid = ?';
+        // ถ้าเปลี่ยนเป็น TRUE ให้ stamp เวลาใหม่ (วันที่และเวลา)
+        timeQuery = 'UPDATE guestinfo SET checked_in = ?, checked_in_time = DATE_FORMAT(NOW(), "%d-%m-%Y %H:%i") WHERE uuid = ?';
     } else {
         // ถ้าเปลี่ยนเป็น FALSE ให้ลบเวลา (NULL)
         timeQuery = 'UPDATE guestinfo SET checked_in = ?, checked_in_time = NULL WHERE uuid = ?';
