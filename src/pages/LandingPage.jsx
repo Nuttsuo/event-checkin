@@ -61,7 +61,8 @@ function LandingPage() {
         });
 
         toast.current.show({
-            sticky: true,
+            // sticky: true,
+            life: POPUP_DURATION,
             content: (
                 <div className="relative rounded-2xl w-[600px] max-w-[90vw]">
                     {/* Backdrop layer */}

@@ -2,7 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LandingPage from './pages/LandingPage';
 import AdminPage from './pages/AdminPage';
-import ScannerPage from './pages/ScannerPage';
+// import ScannerPage from './pages/ScannerPage';
 import './App.css';
 
 function App() {
@@ -12,7 +12,7 @@ function App() {
         <Route path="/" element={<Navigate to="/landing" />} />
         <Route path="/landing" element={<LandingPage />} />
         <Route path="/admin" element={<AdminPage />} />
-        <Route path="/scanner" element={<ScannerPage />} />
+        {/* <Route path="/scanner" element={<ScannerPage />} /> */}
       </Routes>
     </Router>
   );
