@@ -39,7 +39,7 @@ function CheckInDialog({ visible, onHide, onCheckIn }) {
         <Dialog 
             visible={visible} 
             onHide={onHide}
-            header="Check-in Guest"
+            header="Manual Check-in Guest"
             modal
             className="w-full max-w-lg"
         >
@@ -98,6 +98,8 @@ function AdminPage() {
     });
     const [error, setError] = useState('');
     const [tableKey, setTableKey] = useState(0); // เพิ่ม key สำหรับ force re-render
+    const [scanListening, setScanListening] = useState(false); // สถานะการ listen scan
+    const scanIntervalRef = useRef(null); // เก็บ interval reference
 
     // Force update table เฉพาะเมื่อจำเป็น
     const forceUpdateTable = () => {
@@ -432,9 +434,68 @@ function AdminPage() {
         }
     };
 
+    // ฟังก์ชันสำหรับ toggle scan listening mode
+    const toggleScanListening = () => {
+        if (scanListening) {
+            // ปิด scan listening
+            setScanListening(false);
+            if (scanIntervalRef.current) {
+                clearInterval(scanIntervalRef.current);
+                scanIntervalRef.current = null;
+            }
+            toast.current.show({
+                severity: 'info',
+                summary: 'Scan Listening Disabled',
+                detail: 'Manual check-in mode only',
+                life: 3000
+            });
+        } else {
+            // เปิด scan listening
+            setScanListening(true);
+            startScanListening();
+            toast.current.show({
+                severity: 'success',
+                summary: 'Scan Listening Enabled',
+                detail: 'Ready to receive scanned QR codes',
+                life: 3000
+            });
+        }
+    };
+
+    // ฟังก์ชันเริ่ม listening สำหรับ scan
+    const startScanListening = () => {
+        // สร้าง interval สำหรับ polling หา scan result
+        scanIntervalRef.current = setInterval(async () => {
+            try {
+                // เรียก API endpoint ที่จะรับ UUID จาก scanner
+                const response = await api.get('/api/scanner/latest-scan');
+                if (response.data && response.data.uuid) {
+                    // ถ้าได้ UUID มาแล้ว ให้ทำการ check-in
+                    await handleScan(response.data.uuid);
+                    // Clear UUID ที่ server หลังจากใช้แล้ว
+                    await api.delete('/api/scanner/latest-scan');
+                }
+            } catch (error) {
+                // ไม่ต้อง log error สำหรับ polling ที่ไม่มีข้อมูล
+                if (error.response?.status !== 404) {
+                    console.error('Error polling scanner:', error);
+                }
+            }
+        }, 1000); // Poll ทุก 1 วินาที
+    };
+
     // Fetch guests data
     useEffect(() => {
         fetchGuests();
+    }, []);
+
+    // Cleanup interval เมื่อ component unmount
+    useEffect(() => {
+        return () => {
+            if (scanIntervalRef.current) {
+                clearInterval(scanIntervalRef.current);
+            }
+        };
     }, []);
 
     const fetchGuests = async () => {
@@ -553,13 +614,32 @@ function AdminPage() {
             <Toast ref={toast} />
             <ConfirmDialog />
             
-            {/* Check-in Button */}
-            <Button 
-                icon="pi pi-user-plus"
-                label="Check-in Guest"
-                className="p-button-primary mb-4"
-                onClick={() => setCheckInDialogVisible(true)}
-            />
+            {/* Action Buttons */}
+            <div className="flex gap-4 mb-4">
+                {/* Manual Check-in Button */}
+                <Button 
+                    icon="pi pi-user-plus"
+                    label="Manual Check-in"
+                    className="p-button-primary"
+                    onClick={() => setCheckInDialogVisible(true)}
+                />
+                
+                {/* Scan Listening Toggle Button */}
+                <Button 
+                    icon={scanListening ? "pi pi-pause" : "pi pi-play"}
+                    label={scanListening ? "Stop Scanning" : "Start Scanning"}
+                    className={scanListening ? "p-button-warning" : "p-button-success"}
+                    onClick={toggleScanListening}
+                />
+                
+                {/* Status Indicator */}
+                {scanListening && (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-green-100 text-green-800 rounded-lg">
+                        <i className="pi pi-circle-fill animate-pulse text-green-500"></i>
+                        <span className="text-sm font-medium">Listening for scans...</span>
+                    </div>
+                )}
+            </div>
 
             {/* Check-in Dialog */}
             <CheckInDialog

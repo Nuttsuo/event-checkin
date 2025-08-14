@@ -4,6 +4,38 @@ import centum50 from '../assets/centum50th.png';
 import io from 'socket.io-client';
 import { Toast } from 'primereact/toast';
 
+// Custom Toast Theme for PrimeReact
+const customToastTheme = {
+    toast: {
+        root: {
+            className: 'fixed inset-0 flex items-center justify-center z-50 pointer-events-none'
+        },
+        message: () => ({
+            className: 'pointer-events-auto'
+        }),
+        content: {
+            className: 'p-0'
+        },
+        icon: {
+            className: 'hidden'
+        },
+        text: 'hidden',
+        summary: 'hidden',
+        detail: 'hidden',
+        closebutton: {
+            className: 'hidden'
+        },
+        transition: {
+            enterFromClass: 'opacity-0 -translate-x-full',
+            enterActiveClass: 'transition-all duration-300 ease-out',
+            enterToClass: 'opacity-100 translate-x-0',
+            leaveFromClass: 'opacity-100 translate-x-0',
+            leaveActiveClass: 'transition-all duration-300 ease-in',
+            leaveToClass: 'opacity-0 -translate-x-full'
+        }
+    }
+};
+
 function LandingPage() {
     const vantaRef = useRef(null);
     const effectRef = useRef(null);
@@ -29,12 +61,19 @@ function LandingPage() {
         });
 
         toast.current.show({
-            className: 'bg-transparent border-none shadow-none',
-             sticky: true, // ทำให้ toast ค้างอยู่
-            // life: POPUP_DURATION, // หรือใช้ sticky แทนถ้าต้องการ
+            sticky: true,
             content: (
-                <div className=" transform transition-all scale-100 w-full">
-                    <div className="bg-slate-700/80 backdrop-filter-sm rounded-2xl px-16 py-10 shadow-2xl border border-white/30  w-[550px] max-w-[90vw]">
+                <div className="relative rounded-2xl w-[600px] max-w-[90vw]">
+                    {/* Backdrop layer */}
+                    <div 
+                        className="absolute inset-0 rounded-2xl border border-white/30 bg-slate-900/80"
+                        style={{
+                            backdropFilter: 'blur(8px)',
+                            WebkitBackdropFilter: 'blur(8px)'
+                        }}
+                    />
+                    {/* Content layer */}
+                    <div className="relative z-10 px-16 py-10 shadow-2xl rounded-2xl">
                         <div className="text-center space-y-5">
                             <div className="text-white space-y-3">
                                 <p className="text-2xl font-light">Welcome !</p>
@@ -221,62 +260,8 @@ function LandingPage() {
             <Toast 
                 ref={toast} 
                 position="center"
-                style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '0.1rem'
-                }}
+                pt={customToastTheme.toast}
             />
-            
-            {/* Custom Toast Styles */}
-            <style>
-                {`
-                    .p-toast {
-                        opacity: 1 !important;
-                    }
-                    
-                    .p-toast-message{
-                    backdrop-filter: none;
-                    box-shadow: none;
-                    }
-                    
-                                        
-                    .p-toast-icon-close {
-                        display: none;
-                    }
-                    
-                    @keyframes slideInLeft {
-                    from {
-                        transform: translateX(-100%);
-                        opacity: 0;
-                    }
-                    to {
-                        transform: translateX(-20%);
-                        opacity: 1;
-                    }
-                    }
-
-                    @keyframes slideOutLeft {
-                    from {
-                        transform: translateX(0);
-                        opacity: 1;
-                    }
-                    to {
-                        transform: translateX(-100%);
-                        opacity: 0;
-                    }
-                    }
-
-                    /* Override Toast animation */
-                    .p-toast-message {
-                    animation: slideInLeft 0.3s ease-out forwards;
-                    }
-
-                    .p-toast-message-leave {
-                    animation: slideOutLeft 0.3s ease-in forwards !important;
-                    }
-                `}
-            </style>
         </>
     );
 }
