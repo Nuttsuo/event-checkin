@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../utils/api';
 import { checkInQueue } from '../utils/checkInQueue';
 import { TabView, TabPanel } from 'primereact/tabview';
@@ -8,6 +8,7 @@ import { Dialog } from 'primereact/dialog';
 import { Button } from 'primereact/button';
 import { Toast } from 'primereact/toast';
 import { InputText } from 'primereact/inputtext';
+import { InputSwitch } from 'primereact/inputswitch';
 import { Tag } from 'primereact/tag';
 import { Dropdown } from 'primereact/dropdown';
 import { IconField } from 'primereact/iconfield';
@@ -15,6 +16,7 @@ import 'primeicons/primeicons.css';
 import { InputIcon } from 'primereact/inputicon';
 import { FilterMatchMode } from 'primereact/api';
 import { ConfirmDialog, confirmDialog } from 'primereact/confirmdialog';
+import io from 'socket.io-client';
 
 // Check-in Dialog Component
 function CheckInDialog({ visible, onHide, onCheckIn }) {
@@ -79,31 +81,48 @@ function AdminPage() {
     const [filters, setFilters] = useState({
         global: { value: null, matchMode: FilterMatchMode.CONTAINS },
         name: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
-        email: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
         company: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
         phone: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
         checked_in: { value: null, matchMode: FilterMatchMode.EQUALS },
-        allergies: { value: null, matchMode: FilterMatchMode.CONTAINS }
+        allergies: { value: null, matchMode: FilterMatchMode.CONTAINS },
+        Food: { value: null, matchMode: FilterMatchMode.CONTAINS },
+        Position: { value: null, matchMode: FilterMatchMode.CONTAINS },
+        remark: { value: null, matchMode: FilterMatchMode.CONTAINS }
     });
     const [stats, setStats] = useState({
         total: 0,
         checkedIn: 0
+    });
+    const [foodStats, setFoodStats] = useState({
+        salmon: 0
     });
     const [newGuest, setNewGuest] = useState({
         name: '',
         email: '',
         company: '',
         phone: '',
-        allergies: ''
+        allergies: '',
+        food: '',
+        position: '',
+        remark: ''
     });
     const [error, setError] = useState('');
     const [tableKey, setTableKey] = useState(0); // เพิ่ม key สำหรับ force re-render
+    const [salmonBlockKey, setSalmonBlockKey] = useState(0); // Key สำหรับ force re-render salmon block
     const [scanListening, setScanListening] = useState(false); // สถานะการ listen scan
-    const scanIntervalRef = useRef(null); // เก็บ interval reference
+    const socketRef = useRef(null); // เก็บ socket connection reference
+    const scanTimeoutRef = useRef(null); // เก็บ timeout reference สำหรับ scan buffer
+    const scanBufferRef = useRef(''); // เก็บ scan buffer แบบ ref แทน state
+    const isUpdatingRef = useRef(false); // ป้องกัน toast ซ้ำจาก socket เมื่อเราเป็นคนอัพเดต
 
     // Force update table เฉพาะเมื่อจำเป็น
     const forceUpdateTable = () => {
         setTableKey(prev => prev + 1);
+    };
+
+    // Force update salmon block
+    const forceUpdateSalmonBlock = () => {
+        setSalmonBlockKey(prev => prev + 1);
     };
 
 //#region // ฟังก์ชันสำหรับจัดการการกรอง global filter 
@@ -145,6 +164,22 @@ function AdminPage() {
                 return null;
         }
     };
+
+    // คำนวณจำนวน Salmon ที่เลือก
+    const calculateFoodStats = (guestList) => {
+        const salmonCount = guestList?.filter(guest => {
+            const food = (guest.Food || '').toLowerCase();
+            return food === 'salmon';
+        }).length || 0;
+        
+        const newFoodStats = { salmon: salmonCount };
+        setFoodStats(newFoodStats);
+        
+        // Force update salmon block
+        forceUpdateSalmonBlock();
+        
+        return newFoodStats;
+    };
     const statusBodyTemplate = (rowData) => {
         return <Tag value={rowData.checked_in} severity={getSeverity(rowData.checked_in)}></Tag>;
     };
@@ -155,16 +190,93 @@ function AdminPage() {
 // ==============================================================
     const onRowEditComplete = async (e) => {
     try {
+        console.log('=== Row Edit Complete ===');
         console.log('Updating guest:', e.newData);
         console.log('UUID:', e.newData.uuid);
-        console.log('New status:', e.newData.checked_in);
+        
+        // หาข้อมูลเดิมจาก guests state
+        const originalGuest = guests.find(guest => guest.uuid === e.newData.uuid);
+        console.log('Original guest from state:', originalGuest);
+        
+        // ใช้ข้อมูลจาก editingDataRef เป็นหลัก
+        const editedData = editingDataRef.current[e.newData.uuid];
+        console.log('Edited data from ref:', editedData);
+        
+        console.log('=== DEBUGGING COMPARISON ===');
+        console.log('e.newData:', e.newData);
+        console.log('originalGuest:', originalGuest);
+        console.log('editedData:', editedData);
+        
+        const updateData = {};
+        
+        // **บังคับอัพเดตถ้ามีข้อมูลใน editingDataRef ก่อน (เพราะนี่คือการเปลี่ยนแปลงจริงๆ)**
+        if (editedData) {
+            console.log('*** FORCING UPDATE FROM EDITED DATA ***');
+            
+            if (editedData.checked_in !== undefined) {
+                updateData.checked_in = editedData.checked_in;
+                console.log('Forced checked_in update to:', editedData.checked_in);
+            }
+            
+            if (editedData.Food !== undefined) {
+                updateData.Food = editedData.Food;
+                console.log('Forced Food update to:', editedData.Food);
+            }
+        }
+        
+        // ถ้าไม่มีใน editedData ให้ตรวจสอบการเปลี่ยนแปลงปกติ
+        if (Object.keys(updateData).length === 0 && originalGuest) {
+            console.log('*** CHECKING NORMAL CHANGES ***');
+            
+            // ตรวจสอบ checked_in
+            if (e.newData.checked_in !== originalGuest.checked_in) {
+                updateData.checked_in = e.newData.checked_in;
+                console.log('Status changed to:', e.newData.checked_in);
+            }
+            
+            // ตรวจสอบ Food
+            const newFood = (e.newData.Food || '').toString();
+            const originalFood = (originalGuest.Food || '').toString();
+            console.log('Food comparison - new:', newFood, 'original:', originalFood);
+            
+            if (newFood !== originalFood) {
+                updateData.Food = e.newData.Food;
+                console.log('Food changed from:', originalFood, 'to:', newFood);
+            }
+        }
+        
+        console.log('Final update data to send:', updateData);
+        
+        // ถ้าไม่มีอะไรให้อัพเดต
+        if (Object.keys(updateData).length === 0) {
+            console.log('No changes detected - finishing without API call');
+            
+            // ปิด editing mode
+            let _editingRows = { ...editingRows };
+            delete _editingRows[e.newData.uuid];
+            setEditingRows(_editingRows);
+            setActiveActionRow(null);
+            
+            // ล้างข้อมูลที่กำลังแก้ไข
+            setEditingData(prev => {
+                const newData = { ...prev };
+                delete newData[e.newData.uuid];
+                return newData;
+            });
+            delete editingDataRef.current[e.newData.uuid];
+            
+            return;
+        }
+        
+        // ตั้ง flag ว่าเราเป็นคนอัพเดต เพื่อป้องกัน toast ซ้ำจาก socket
+        isUpdatingRef.current = true;
         
         // เรียก API เพื่ออัพเดตข้อมูล
-        const response = await api.put(`/guests/${e.newData.uuid}`, {
-            checked_in: e.newData.checked_in
-        });
+        console.log('Calling API with updateData:', updateData);
+        const response = await api.put(`/guests/${e.newData.uuid}`, updateData);
         
         console.log('Update response:', response.data);
+        console.log('API call successful');
         
         // อัพเดต state
         let _guests = [...guests];
@@ -190,8 +302,8 @@ function AdminPage() {
         // Refresh guest list เพื่อให้ข้อมูลเวลาอัพเดต
         fetchGuests();
         
-        // แสดง toast message ที่แตกต่างกันตามสถานะ
-        if (e.newData.checked_in === 'TRUE') {
+        // แสดง toast message ที่แตกต่างกันตามการเปลี่ยนแปลง
+        if (updateData.checked_in === 'TRUE') {
             toast.current.show({
                 severity: 'success',
                 summary: 'Manual Check-in Success',
@@ -200,11 +312,18 @@ function AdminPage() {
                     'Guest checked in manually',
                 life: 5000
             });
-        } else {
+        } else if (updateData.checked_in === 'FALSE') {
             toast.current.show({
                 severity: 'info',
                 summary: 'Status Updated',
                 detail: 'Guest status updated to not checked in',
+                life: 3000
+            });
+        } else if (updateData.Food) {
+            toast.current.show({
+                severity: 'success',
+                summary: 'Food Preference Updated',
+                detail: `Food preference updated to: ${updateData.Food}`,
                 life: 3000
             });
         }
@@ -259,13 +378,10 @@ function AdminPage() {
                             ...prev,
                             [rowData.uuid]: updatedData
                         };
-                        // console.log('statusEditor - prev editingData:', prev);
-                        // console.log('statusEditor - new editingData:', newEditingData);
-                        // console.log('statusEditor - rowData.uuid:', rowData.uuid);
+
                         
                         // เก็บใน ref ด้วย
                         editingDataRef.current = newEditingData;
-                        // console.log('statusEditor - editingDataRef.current:', editingDataRef.current);
                         
                         return newEditingData;
                     });
@@ -274,6 +390,50 @@ function AdminPage() {
                 itemTemplate={(option) => {
                     return <Tag value={option} severity={getSeverity(option)}></Tag>;
                 }}
+            />
+        );
+    };
+
+    // Food editor with editable dropdown
+    const foodEditor = (options) => {
+        const foodOptions = ['Salmon', 'Beef', 'Unknown'];
+        
+        return (
+            <Dropdown
+                value={options.value}
+                options={foodOptions}
+                onChange={(e) => {
+                    // เรียก editorCallback ก่อนเพื่ออัพเดต UI
+                    options.editorCallback(e.value);
+                    
+                    // เก็บข้อมูลที่แก้ไขไว้ใน editingDataRef
+                    const rowData = options.rowData;
+                    const uuid = rowData.uuid;
+                    
+                    // อัพเดต editingDataRef โดยตรง
+                    if (!editingDataRef.current[uuid]) {
+                        editingDataRef.current[uuid] = { ...rowData };
+                    }
+                    editingDataRef.current[uuid].Food = e.value;
+                    
+                    // อัพเดต editingData state เพื่อให้ component re-render
+                    setEditingData(prev => {
+                        const newEditingData = {
+                            ...prev,
+                            [uuid]: {
+                                ...prev[uuid],
+                                ...rowData,
+                                Food: e.value
+                            }
+                        };
+                        
+                        // console.log('foodEditor - editingData state updated:', newEditingData);
+                        return newEditingData;
+                    });
+                }}
+                placeholder="Select Food"
+                editable
+                className="w-full"
             />
         );
     };
@@ -328,22 +488,11 @@ function AdminPage() {
                         icon="pi pi-check"
                         className="p-button-rounded p-button-sm p-button-success" 
                         onClick={() => {
-                            // console.log('=== SAVE BUTTON CLICKED ===');
-                            // console.log('Save button clicked for:', rowData.name);
-                            // console.log('rowData.uuid:', rowData.uuid);
-                            // console.log('Current editingData state:', editingData);
-                            // console.log('Current editingDataRef.current:', editingDataRef.current);
-                            // console.log('editingData for this row (state):', editingData[rowData.uuid]);
-                            // console.log('editingData for this row (ref):', editingDataRef.current[rowData.uuid]);
-                            // console.log('Original rowData:', rowData);
                             
                             // ใช้ข้อมูลจาก ref ก่อน แล้วค่อย fallback ไป state
                             const updatedData = editingDataRef.current[rowData.uuid] || editingData[rowData.uuid] || rowData;
                             const index = guests.findIndex(g => g.uuid === rowData.uuid);
                             
-                            // console.log('Final data to save:', updatedData);
-                            // console.log('Comparison - original checked_in:', rowData.checked_in);
-                            // console.log('Comparison - new checked_in:', updatedData.checked_in);
                             
                             // เรียก onRowEditComplete กับข้อมูลที่แก้ไขแล้ว
                             onRowEditComplete({
@@ -403,8 +552,8 @@ function AdminPage() {
 
     const handleScan = async (uuid) => {
         try {
-            // เพิ่มเข้า queue แทนที่จะเรียก API โดยตรง
-            const response = await checkInQueue.add(uuid);
+            // เรียก API โดยตรงแทน queue เพื่อให้ได้ error response ที่ถูกต้อง
+            const response = await api.post(`/checkin/${uuid}`);
             
             if (response.status === 200) {
                 toast.current.show({
@@ -424,25 +573,49 @@ function AdminPage() {
                 });
             }
         } catch (error) {
-            console.error('Error:', error);
-            toast.current.show({
-                severity: 'error',
-                summary: 'Error',
-                detail: 'Guest not found. Failed to check-in guest',
-                life: 5000
-            });
+            console.error('Direct API Error:', error);
+            console.error('Error response:', error.response);
+            console.error('Error status:', error.response?.status);
+            console.error('Error data:', error.response?.data);
+            
+            // เช็คว่าเป็น error แบบไหน
+            if (error.response?.status === 409) {
+                // กรณีเช็คอินซ้ำ (409 Conflict)
+                const guest = error.response.data.guest;
+                toast.current.show({
+                    severity: 'warn',
+                    summary: 'Already Checked In',
+                    detail: `${guest.name} from ${guest.company} has already checked in`,
+                    life: 5000
+                });
+            } else if (error.response?.status === 404) {
+                // กรณีไม่เจอแขก (404 Not Found)
+                toast.current.show({
+                    severity: 'error',
+                    summary: 'Guest Not Found',
+                    detail: 'Guest not found. Failed to check-in guest',
+                    life: 5000
+                });
+            } else {
+                // กรณีอื่นๆ
+                toast.current.show({
+                    severity: 'error',
+                    summary: 'Error',
+                    detail: error.response?.data?.message || 'Failed to check-in guest',
+                    life: 5000
+                });
+            }
         }
     };
 
     // ฟังก์ชันสำหรับ toggle scan listening mode
     const toggleScanListening = () => {
+        console.log('Toggle scan listening clicked, current state:', scanListening);
+        
         if (scanListening) {
             // ปิด scan listening
             setScanListening(false);
-            if (scanIntervalRef.current) {
-                clearInterval(scanIntervalRef.current);
-                scanIntervalRef.current = null;
-            }
+            stopScanListening();
             toast.current.show({
                 severity: 'info',
                 summary: 'Scan Listening Disabled',
@@ -456,47 +629,222 @@ function AdminPage() {
             toast.current.show({
                 severity: 'success',
                 summary: 'Scan Listening Enabled',
-                detail: 'Ready to receive scanned QR codes',
-                life: 3000
+                detail: 'Ready to receive scanned QR codes. Try typing and pressing Enter to test.',
+                life: 5000
             });
         }
     };
 
     // ฟังก์ชันเริ่ม listening สำหรับ scan
     const startScanListening = () => {
-        // สร้าง interval สำหรับ polling หา scan result
-        scanIntervalRef.current = setInterval(async () => {
-            try {
-                // เรียก API endpoint ที่จะรับ UUID จาก scanner
-                const response = await api.get('/api/scanner/latest-scan');
-                if (response.data && response.data.uuid) {
-                    // ถ้าได้ UUID มาแล้ว ให้ทำการ check-in
-                    await handleScan(response.data.uuid);
-                    // Clear UUID ที่ server หลังจากใช้แล้ว
-                    await api.delete('/api/scanner/latest-scan');
-                }
-            } catch (error) {
-                // ไม่ต้อง log error สำหรับ polling ที่ไม่มีข้อมูล
-                if (error.response?.status !== 404) {
-                    console.error('Error polling scanner:', error);
-                }
-            }
-        }, 1000); // Poll ทุก 1 วินาที
+        // ลบ event listener เดิมก่อน (เผื่อมีอยู่แล้ว)
+        document.removeEventListener('keydown', handleKeyboardScan);
+        // เพิ่ม event listener ใหม่
+        document.addEventListener('keydown', handleKeyboardScan);
+        console.log('Started listening for keyboard events');
+        
+        // เก็บสถานะใน ref
+        if (!socketRef.current) {
+            socketRef.current = {};
+        }
+        socketRef.current.scanListening = true;
+        
+        // เตรียม socket connection สำหรับอนาคต (ถ้าต้องการ)
+        if (!socketRef.current.socket) {
+            const socketURL = import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:3001';
+            socketRef.current.socket = io(socketURL);
+            socketRef.current.socket.on('scanner-input', handleSocketScan);
+        }
     };
 
-    // Fetch guests data
+    // ฟังก์ชันหยุด listening
+    const stopScanListening = () => {
+        // หยุดฟัง keyboard
+        document.removeEventListener('keydown', handleKeyboardScan);
+        console.log('Stopped listening for keyboard events');
+        
+        // อัพเดตสถานะใน ref
+        if (socketRef.current) {
+            socketRef.current.scanListening = false;
+        }
+        
+        // ล้าง buffer ที่เหลือ
+        scanBufferRef.current = '';
+        console.log('Buffer cleared on stop');
+        
+        // ปิด socket connection
+        if (socketRef.current?.socket) {
+            socketRef.current.socket.disconnect();
+            socketRef.current.socket = null;
+        }
+    };
+
+    // สร้าง event handler ที่ไม่มี dependency เปลี่ยนแปลง
+    const handleKeyboardScan = useCallback((event) => {
+        console.log('=== KEYBOARD EVENT DETECTED ===');
+        console.log('scanListening (current):', scanListening);
+        console.log('scanListening (from ref):', socketRef.current?.scanListening);
+        console.log('event.key:', event.key);
+        console.log('event.code:', event.code);
+        
+        // ใช้ ref เพื่อเช็ค state แทน
+        if (!socketRef.current?.scanListening) {
+            console.log('Scan listening is disabled, ignoring event');
+            return;
+        }
+
+        // ป้องกันการประมวลผล modifier keys
+        if (event.ctrlKey || event.altKey || event.metaKey) {
+            console.log('Modifier key detected, ignoring');
+            return;
+        }
+
+        // เช็คว่าเป็น Enter (สิ้นสุดการสแกน)
+        if (event.key === 'Enter') {
+            const currentBuffer = scanBufferRef.current.trim();
+            console.log('=== ENTER PRESSED ===');
+            console.log('Current buffer:', currentBuffer);
+            console.log('Buffer length:', currentBuffer.length);
+            
+            if (currentBuffer.length > 0) {
+                // ตรวจสอบว่าเป็น UUID format หรือไม่
+                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                if (uuidRegex.test(currentBuffer)) {
+                    console.log('✅ Valid UUID detected, calling handleScan:', currentBuffer);
+                    handleScan(currentBuffer);
+                    toast.current.show({
+                        severity: 'success',
+                        summary: 'QR Code Scanned',
+                        detail: `Processing UUID: ${currentBuffer.substring(0, 8)}...`,
+                        life: 2000
+                    });
+                } else {
+                    console.log('❌ Invalid UUID format:', currentBuffer);
+                    toast.current.show({
+                        severity: 'warn',
+                        summary: 'Invalid QR Code',
+                        detail: `Scanned: "${currentBuffer}" - Not a valid UUID format`,
+                        life: 5000
+                    });
+                }
+                scanBufferRef.current = '';
+                console.log('Buffer cleared');
+            } else {
+                console.log('Buffer is empty');
+            }
+            return;
+        }
+
+        // รับทุก character ที่พิมพ์เข้ามา
+        if (event.key.length === 1) {
+            scanBufferRef.current += event.key;
+            console.log('Character added:', event.key);
+            console.log('New buffer:', scanBufferRef.current);
+            
+            // ตั้ง timeout เพื่อล้าง buffer ถ้าไม่ได้ scan ต่อ
+            if (scanTimeoutRef.current) {
+                clearTimeout(scanTimeoutRef.current);
+            }
+            scanTimeoutRef.current = setTimeout(() => {
+                console.log('⏰ Buffer timeout, clearing buffer:', scanBufferRef.current);
+                scanBufferRef.current = '';
+            }, 1000);
+        }
+    }, []); // ไม่มี dependency แล้ว
+
+    // Handle socket-based scan (สำหรับอนาคต)
+    const handleSocketScan = (data) => {
+        if (data && data.uuid) {
+            handleScan(data.uuid);
+        }
+    };
+
+    // Fetch guests data และเชื่อมต่อ socket
     useEffect(() => {
         fetchGuests();
-    }, []);
+        
+        // เชื่อมต่อ socket.io
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+        const socketUrl = apiUrl.replace('/api', ''); // ลบ /api ออกสำหรับ socket.io
+        console.log('Connecting to socket at:', socketUrl);
+        
+        const socket = io(socketUrl, {
+            transports: ['polling', 'websocket'], // ใช้ polling ก่อน แล้วค่อย upgrade เป็น websocket
+            timeout: 10000, // เพิ่ม timeout เป็น 10 วินาที
+            forceNew: true, // บังคับสร้าง connection ใหม่
+            reconnection: true, // เปิดการ reconnect อัตโนมัติ
+            reconnectionAttempts: 5, // พยายาม reconnect สูงสุด 5 ครั้ง
+            reconnectionDelay: 1000, // รอ 1 วินาที ก่อน reconnect
+            cors: {
+                origin: "*",
+                methods: ["GET", "POST", "PUT", "DELETE"]
+            }
+        });
+        socketRef.current = { socket };
 
-    // Cleanup interval เมื่อ component unmount
-    useEffect(() => {
+        // Event handlers
+        socket.on('connect', () => {
+            console.log('Socket connected successfully');
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('Socket connection error:', error);
+            // ไม่ต้องแสดง error เพราะอาจรบกวนการใช้งาน
+        });
+
+        socket.on('disconnect', (reason) => {
+            console.log('Socket disconnected:', reason);
+        });
+
+        // ฟัง event สำหรับ data update
+        socket.on('data-updated', (data) => {
+            console.log('Data updated from another device:', data);
+            console.log('isUpdatingRef.current:', isUpdatingRef.current);
+            
+            // แสดง toast เฉพาะตอนที่ไม่ใช่เราเป็นคนอัพเดต
+            if (!isUpdatingRef.current) {
+                toast.current.show({
+                    severity: 'info',
+                    summary: 'Data Updated',
+                    detail: 'Guest data has been updated from another device',
+                    life: 3000
+                });
+            } else {
+                console.log('Skipping toast - this device triggered the update');
+            }
+            
+            // Refresh ข้อมูล
+            fetchGuests();
+            
+            // Reset flag หลังจาก 1 วินาที
+            setTimeout(() => {
+                isUpdatingRef.current = false;
+            }, 1000);
+        });
+
+        // Cleanup เมื่อ component unmount
         return () => {
-            if (scanIntervalRef.current) {
-                clearInterval(scanIntervalRef.current);
+            if (socket && socket.connected) {
+                socket.disconnect();
             }
         };
     }, []);
+
+    // Cleanup เมื่อ component unmount (สำหรับ keyboard listener)
+    useEffect(() => {
+        return () => {
+            // ทำความสะอาด keyboard listener
+            document.removeEventListener('keydown', handleKeyboardScan);
+            
+            // ทำความสะอาด scan buffer
+            scanBufferRef.current = '';
+            
+            // ทำความสะอาด timeout
+            if (scanTimeoutRef.current) {
+                clearTimeout(scanTimeoutRef.current);
+            }
+        };
+    }, [handleKeyboardScan]);
 
     const fetchGuests = async () => {
         try {
@@ -508,6 +856,9 @@ function AdminPage() {
                 total: data.length,
                 checkedIn: data.filter(guest => guest.checked_in == 'TRUE').length
             });
+            
+            // Calculate food stats
+            calculateFoodStats(data);
             setError('');
             // ปิด action buttons และ editing rows เมื่อ refresh ข้อมูล
             setActiveActionRow(null);
@@ -535,7 +886,10 @@ function AdminPage() {
                 email: '', 
                 company: '', 
                 phone: '', 
-                allergies: '' 
+                allergies: '',
+                food: '',
+                position: '',
+                remark: ''
             });
             
             // Refresh guest list
@@ -624,13 +978,33 @@ function AdminPage() {
                     onClick={() => setCheckInDialogVisible(true)}
                 />
                 
-                {/* Scan Listening Toggle Button */}
-                <Button 
-                    icon={scanListening ? "pi pi-pause" : "pi pi-play"}
-                    label={scanListening ? "Stop Scanning" : "Start Scanning"}
-                    className={scanListening ? "p-button-warning" : "p-button-success"}
-                    onClick={toggleScanListening}
-                />
+                {/* Scan Listening Toggle Switch */}
+                <div className="flex items-center gap-4 p-3 border rounded-lg bg-white">
+                    <div className="flex items-center gap-3">
+                        <i className={`pi ${scanListening ? 'pi-pause text-orange-500' : 'pi-play text-green-500'} text-xl`}></i>
+                        <div className="flex flex-col gap-1">
+                            <label htmlFor="scan-switch" className="text-sm font-medium text-gray-700">
+                                QR Scanner Mode
+                            </label>
+                            <span className="text-xs text-gray-500">
+                                {scanListening ? "Listening for QR codes..." : "Click to start scanning"}
+                            </span>
+                        </div>
+                    </div>
+                    <InputSwitch 
+                        id="scan-switch"
+                        checked={scanListening}
+                        onChange={(e) => {
+                            console.log('InputSwitch toggled to:', e.value);
+                            setScanListening(e.value);
+                            if (e.value) {
+                                startScanListening();
+                            } else {
+                                stopScanListening();
+                            }
+                        }}
+                    />
+                </div>
                 
                 {/* Status Indicator */}
                 {scanListening && (
@@ -638,6 +1012,23 @@ function AdminPage() {
                         <i className="pi pi-circle-fill animate-pulse text-green-500"></i>
                         <span className="text-sm font-medium">Listening for scans...</span>
                     </div>
+                )}
+                
+                {/* Test Button */}
+                {scanListening && (
+                    <Button 
+                        icon="pi pi-cog"
+                        label="Test Input"
+                        className="p-button-secondary"
+                        onClick={() => {
+                            const testUuid = '8f6f2a76-ece2-49d2-be40-5f49a1c4abfd';
+                            console.log('Manual test - adding to buffer:', testUuid);
+                            scanBufferRef.current = testUuid;
+                            // Simulate Enter key
+                            const enterEvent = new KeyboardEvent('keydown', { key: 'Enter' });
+                            handleKeyboardScan(enterEvent);
+                        }}
+                    />
                 )}
             </div>
 
@@ -653,18 +1044,63 @@ function AdminPage() {
                     <span className="block sm:inline">{error}</span>
                 </div>
             )}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-                <div className="bg-white rounded-lg shadow p-4">
-                    <h2 className="text-xl font-bold mb-2">Total Guests</h2>
-                    <p className="text-3xl">{stats.total}</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                {/* Total Guests */}
+                <div className="bg-white rounded-lg shadow-md p-4 border">
+                    <h2 className="text-xl font-bold mb-2 text-gray-800">Total Guests</h2>
+                    <p className="text-3xl font-bold text-blue-600">{stats.total}</p>
                 </div>
-                <div className="bg-white rounded-lg shadow p-4">
-                    <h2 className="text-xl font-bold mb-2">Checked In</h2>
-                    <p className="text-3xl">{stats.checkedIn}</p>
+                
+                {/* Checked In */}
+                <div className="bg-white rounded-lg shadow-md p-4 border">
+                    <h2 className="text-xl font-bold mb-2 text-gray-800">Checked In</h2>
+                    <p className="text-3xl font-bold text-green-600">{stats.checkedIn}</p>
                 </div>
-                <div className="bg-white rounded-lg shadow p-4">
-                    <h2 className="text-xl font-bold mb-2">Remaining</h2>
-                    <p className="text-3xl">{stats.total - stats.checkedIn}</p>
+                
+                {/* Guest Remaining */}
+                <div className="bg-white rounded-lg shadow-md p-4 border">
+                    <h2 className="text-xl font-bold mb-2 text-gray-800">Guest Remaining</h2>
+                    <p className="text-3xl font-bold text-orange-600">{stats.total - stats.checkedIn}</p>
+                </div>
+                
+                {/* Salmon Remaining - Use inline styles to force styling */}
+                <div 
+                    key={`salmon-${foodStats?.salmon || 0}`}
+                    style={{
+                        backgroundColor: (15 - (foodStats?.salmon || 0)) <= 0 ? '#ef4444' : '#ffffff',
+                        color: (15 - (foodStats?.salmon || 0)) <= 0 ? '#ffffff' : '#374151',
+                        borderColor: (15 - (foodStats?.salmon || 0)) <= 0 ? '#dc2626' : '#d1d5db',
+                        borderWidth: '2px',
+                        borderStyle: 'solid'
+                    }}
+                    className="rounded-lg shadow-md p-4 transition-all duration-300"
+                >
+                    <h2 className="text-xl font-bold mb-2">Salmon Remaining</h2>
+                    <div className="text-3xl font-bold mb-2">
+                        {Math.max(0, 15 - (foodStats?.salmon || 0))}
+                    </div>
+                    {(15 - (foodStats?.salmon || 0)) <= 0 && (
+                        <div 
+                            style={{
+                                backgroundColor: '#dc2626',
+                                color: '#ffffff',
+                                padding: '4px 8px',
+                                borderRadius: '4px',
+                                fontSize: '14px',
+                                fontWeight: 'normal',
+                                marginTop: '8px'
+                            }}
+                        >
+                            🚨 หมดแล้ว!
+                        </div>
+                    )}
+                    <p style={{
+                        fontSize: '12px',
+                        opacity: (15 - (foodStats?.salmon || 0)) <= 0 ? '0.8' : '0.6',
+                        marginTop: '8px'
+                    }}>
+                        Used: {foodStats?.salmon || 0} / 15
+                    </p>
                 </div>
             </div>
 
@@ -692,10 +1128,17 @@ function AdminPage() {
         >
             {/* <Column field="uuid" header="UUID"></Column> */}
             <Column field="name" header="Name" style={{ minWidth: '200px' }} frozen className="font-bold"></Column>
-            <Column field="email" header="Email"></Column>
             <Column field="company" header="Company"></Column>
             <Column field="phone" header="Phone"></Column>
             <Column field="allergies" header="Allergies"></Column>
+            <Column 
+                field="Food" 
+                header="Food" 
+                style={{ minWidth: '120px' }}
+                editor={(options) => foodEditor(options)}
+            ></Column>
+            <Column field="Position" header="Table" style={{ minWidth: '80px' }}></Column>
+            <Column field="remark" header="Remark" style={{ minWidth: '150px' }}></Column>
             <Column 
                 field="checked_in" 
                 body={statusBodyTemplate} 
@@ -763,6 +1206,36 @@ function AdminPage() {
                             onChange={(e) => setNewGuest({...newGuest, allergies: e.target.value})}
                             className="w-full p-2 border rounded"
                             rows="3"
+                        />
+                    </div>
+                    <div>
+                        <label className="block mb-1">Food Preference</label>
+                        <input
+                            type="text"
+                            value={newGuest.food}
+                            onChange={(e) => setNewGuest({...newGuest, food: e.target.value})}
+                            className="w-full p-2 border rounded"
+                            placeholder="e.g., Vegetarian, Halal, etc."
+                        />
+                    </div>
+                    <div>
+                        <label className="block mb-1">Position</label>
+                        <input
+                            type="text"
+                            value={newGuest.position}
+                            onChange={(e) => setNewGuest({...newGuest, position: e.target.value})}
+                            className="w-full p-2 border rounded"
+                            placeholder="e.g., 1, 2, VIP, etc."
+                        />
+                    </div>
+                    <div>
+                        <label className="block mb-1">Remark</label>
+                        <textarea
+                            value={newGuest.remark}
+                            onChange={(e) => setNewGuest({...newGuest, remark: e.target.value})}
+                            className="w-full p-2 border rounded"
+                            rows="2"
+                            placeholder="Additional notes or remarks"
                         />
                     </div>
                     <Button

@@ -9,12 +9,17 @@ const app = express();
 const server = createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: "http://localhost:5173",
-        methods: ["GET", "POST"]
+        origin: "*", // อนุญาตทุก domain (สำหรับ development)
+        methods: ["GET", "POST", "PUT", "DELETE"]
     }
 });
 
-app.use(cors());
+// เปิด CORS สำหรับทุก origin
+app.use(cors({
+    origin: "*", // อนุญาตทุก domain
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+}));
 app.use(express.json());
 
 // MySQL Connection with connection pool
@@ -39,13 +44,15 @@ app.get('/api/guests', (req, res) => {
         SELECT 
             uuid,
             Name as name,
-            Email as email,
             Company as company,
             Phone_No as phone,
             Allergies as allergies,
             checked_in,
-            checked_in_time
-        FROM guestinfo 
+            checked_in_time,
+            Food,
+            Position,
+            remark
+        FROM guestinfo
         ORDER BY Name
     `)
         .then(([rows]) => {
@@ -62,115 +69,280 @@ app.get('/api/guests', (req, res) => {
 });
 
 app.post('/api/guests', (req, res) => {
-    const { name, email, company, phone, allergies } = req.body;
+    const { name, email, company, phone, allergies, food, position, remark } = req.body;
     const uuid = uuidv4();
 
     db.query(
-        'INSERT INTO guestinfo (uuid, Name, Email, Company, Phone_No, Allergies) VALUES (?, ?, ?, ?, ?, ?)',
-        [uuid, name, email, company, phone, allergies],
+        'INSERT INTO guestinfo (uuid, Name, Email, Company, Phone_No, Allergies, Food, Position, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [uuid, name, email || '', company, phone, allergies, food || '', position || '', remark || ''],
         (err, result) => {
             if (err) {
                 res.status(500).json({ error: err.message });
                 return;
             }
+            
+            // ส่ง event เพื่อ refresh data ในทุกเครื่อง
+            io.emit('data-updated', { 
+                type: 'guest-added',
+                uuid: uuid,
+                name: name
+            });
+            
             res.json({ id: result.insertId, uuid });
         }
     );
 });
 
-// Check-in guest Normal
-// This endpoint is used to check in a guest by UUID
 app.post('/api/checkin/:uuid', (req, res) => {
     const { uuid } = req.params;
 
-    db.query(
-        'UPDATE guestinfo SET checked_in = "TRUE", checked_in_time = DATE_FORMAT(NOW(), "%d-%m-%Y %H:%i") WHERE uuid = ? AND checked_in = "FALSE"',
-        [uuid],
-        (err, result) => {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
+    // ก่อนอื่นให้เช็คว่าแขกมีอยู่จริงหรือไม่
+    db.query('SELECT uuid, Name as name, Company as company, checked_in FROM guestinfo WHERE uuid = ?', [uuid], (err, results) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
 
-            if (result.affectedRows === 0) {
-                res.status(404).json({ message: 'Guest not found or already checked in'});
-                return;
-            }
+        if (results.length === 0) {
+            // ไม่เจอแขก
+            res.status(404).json({ message: 'Guest not found' });
+            return;
+        }
 
-            // Get guest details
-            db.query('SELECT uuid, Name as name, Company as company FROM guestinfo WHERE uuid = ?', [uuid], (err, results) => {
+        const guest = results[0];
+        
+        if (guest.checked_in === 'TRUE') {
+            // แขกเช็คอินแล้ว
+            res.status(409).json({ 
+                message: 'Already checked in', 
+                guest: {
+                    name: guest.name,
+                    company: guest.company
+                }
+            });
+            return;
+        }
+
+        // ถ้าแขกยังไม่เช็คอิน ให้ทำการเช็คอิน
+        db.query(
+            'UPDATE guestinfo SET checked_in = "TRUE", checked_in_time = DATE_FORMAT(NOW(), "%d-%m-%Y %H:%i") WHERE uuid = ?',
+            [uuid],
+            (err, result) => {
                 if (err) {
                     res.status(500).json({ error: err.message });
                     return;
                 }
 
-                const guest = results[0];
                 // Emit check-in event to all connected clients
                 io.emit('guest-checkin', guest);
+                
+                // ส่ง event เพื่อ refresh data ในทุกเครื่อง
+                io.emit('data-updated', { 
+                    type: 'guest-checkin',
+                    uuid: uuid,
+                    name: guest.name
+                });
 
                 res.json(guest);
-            });
-        }
-    );
+            }
+        );
+    });
 });
 
 // Update guest status endpoint
 app.put('/api/guests/:uuid', (req, res) => {
     const { uuid } = req.params;
-    const { checked_in } = req.body;
+    const { checked_in, Food } = req.body;
 
-    // กำหนดค่า checked_in_time ตามสถานะ
-    let timeQuery;
-    if (checked_in === 'TRUE') {
-        // ถ้าเปลี่ยนเป็น TRUE ให้ stamp เวลาใหม่ (วันที่และเวลา)
-        timeQuery = 'UPDATE guestinfo SET checked_in = ?, checked_in_time = DATE_FORMAT(NOW(), "%d-%m-%Y %H:%i") WHERE uuid = ?';
-    } else {
-        // ถ้าเปลี่ยนเป็น FALSE ให้ลบเวลา (NULL)
-        timeQuery = 'UPDATE guestinfo SET checked_in = ?, checked_in_time = NULL WHERE uuid = ?';
-    }
+    console.log('=== PUT /api/guests/:uuid ===');
+    console.log('UUID:', uuid);
+    console.log('Request body:', req.body);
+    console.log('checked_in:', checked_in);
+    console.log('Food:', Food);
 
-    db.query(
-        timeQuery,
-        [checked_in, uuid],
-        (err, result) => {
-            if (err) {
-                console.error('Error updating guest:', err);
-                res.status(500).json({ message: err.message });
-                return;
-            }
+    // ก่อนอัพเดต ให้ดึงข้อมูลเดิมมาตรวจสอบก่อน
+    db.query('SELECT checked_in FROM guestinfo WHERE uuid = ?', [uuid], (err, currentResults) => {
+        if (err) {
+            console.error('Error getting current guest data:', err);
+            res.status(500).json({ message: err.message });
+            return;
+        }
 
-            if (result.affectedRows === 0) {
-                res.status(404).json({ message: 'Guest not found' });
-                return;
-            }
+        if (currentResults.length === 0) {
+            res.status(404).json({ message: 'Guest not found' });
+            return;
+        }
 
-            // ถ้าเปลี่ยนเป็น TRUE ให้ดึงข้อมูล guest และส่ง socket event
+        const currentCheckedIn = currentResults[0].checked_in;
+        console.log('Current checked_in status:', currentCheckedIn);
+        console.log('New checked_in status:', checked_in);
+
+        // ตรวจสอบว่าต้องการอัพเดตอะไร
+        if (checked_in !== undefined && Food !== undefined) {
+            // อัพเดตทั้ง checked_in และ Food
+            let timeQuery;
             if (checked_in === 'TRUE') {
-                db.query('SELECT uuid, Name as name, Company as company FROM guestinfo WHERE uuid = ?', [uuid], (err, results) => {
+                timeQuery = 'UPDATE guestinfo SET checked_in = ?, Food = ?, checked_in_time = DATE_FORMAT(NOW(), "%d-%m-%Y %H:%i") WHERE uuid = ?';
+            } else {
+                timeQuery = 'UPDATE guestinfo SET checked_in = ?, Food = ?, checked_in_time = NULL WHERE uuid = ?';
+            }
+
+            db.query(
+                timeQuery,
+                [checked_in, Food, uuid],
+                (err, result) => {
                     if (err) {
+                        console.error('Error updating guest:', err);
                         res.status(500).json({ message: err.message });
                         return;
                     }
 
-                    const guest = results[0];
-                    // ส่ง event ไปให้ landing page แสดง popup
-                    io.emit('guest-checkin', guest);
+                    if (result.affectedRows === 0) {
+                        res.status(404).json({ message: 'Guest not found' });
+                        return;
+                    }
+
+                    console.log('Updated both checked_in and Food successfully');
+
+                    // ส่ง event เพื่อ refresh data ในทุกเครื่อง
+                    io.emit('data-updated', { 
+                        type: 'guest-updated',
+                        uuid: uuid,
+                        checked_in: checked_in,
+                        food: Food
+                    });
+
+                    // **ส่ง toast ไป landing page เฉพาะตอนที่เปลี่ยนจาก FALSE เป็น TRUE เท่านั้น**
+                    const isNewCheckIn = (currentCheckedIn === 'FALSE' || currentCheckedIn === false) && checked_in === 'TRUE';
+                    console.log('Is new check-in?', isNewCheckIn);
+
+                    if (isNewCheckIn) {
+                        db.query('SELECT uuid, Name as name, Company as company FROM guestinfo WHERE uuid = ?', [uuid], (err, results) => {
+                            if (err) {
+                                res.status(500).json({ message: err.message });
+                                return;
+                            }
+
+                            const guest = results[0];
+                            // ส่ง event ไปให้ landing page แสดง popup
+                            io.emit('guest-checkin', guest);
+                            console.log('Sent guest-checkin event to landing page');
+
+                            res.json({ 
+                                message: 'Guest checked in successfully',
+                                guest: guest,
+                                showPopup: true 
+                            });
+                        });
+                    } else {
+                        // ไม่ใช่ check-in ใหม่ แค่อัพเดตข้อมูล
+                        res.json({ 
+                            message: checked_in === 'TRUE' ? 'Guest data updated (already checked in)' : 'Guest data updated successfully',
+                            showPopup: false 
+                        });
+                    }
+                }
+            );
+        } else if (checked_in !== undefined) {
+            // อัพเดต checked_in เท่านั้น
+            let timeQuery;
+            if (checked_in === 'TRUE') {
+                timeQuery = 'UPDATE guestinfo SET checked_in = ?, checked_in_time = DATE_FORMAT(NOW(), "%d-%m-%Y %H:%i") WHERE uuid = ?';
+            } else {
+                timeQuery = 'UPDATE guestinfo SET checked_in = ?, checked_in_time = NULL WHERE uuid = ?';
+            }
+
+            db.query(
+                timeQuery,
+                [checked_in, uuid],
+                (err, result) => {
+                    if (err) {
+                        console.error('Error updating guest:', err);
+                        res.status(500).json({ message: err.message });
+                        return;
+                    }
+
+                    if (result.affectedRows === 0) {
+                        res.status(404).json({ message: 'Guest not found' });
+                        return;
+                    }
+
+                    console.log('Updated checked_in successfully');
+
+                    // ส่ง event เพื่อ refresh data ในทุกเครื่อง
+                    io.emit('data-updated', { 
+                        type: 'guest-status-changed',
+                        uuid: uuid,
+                        checked_in: checked_in
+                    });
+
+                    // **ส่ง toast ไป landing page เฉพาะตอนที่เปลี่ยนจาก FALSE เป็น TRUE เท่านั้น**
+                    const isNewCheckIn = (currentCheckedIn === 'FALSE' || currentCheckedIn === false) && checked_in === 'TRUE';
+                    console.log('Is new check-in?', isNewCheckIn);
+
+                    if (isNewCheckIn) {
+                        db.query('SELECT uuid, Name as name, Company as company FROM guestinfo WHERE uuid = ?', [uuid], (err, results) => {
+                            if (err) {
+                                res.status(500).json({ message: err.message });
+                                return;
+                            }
+
+                            const guest = results[0];
+                            // ส่ง event ไปให้ landing page แสดง popup
+                            io.emit('guest-checkin', guest);
+                            console.log('Sent guest-checkin event to landing page');
+
+                            res.json({ 
+                                message: 'Guest checked in successfully',
+                                guest: guest,
+                                showPopup: true 
+                            });
+                        });
+                    } else {
+                        res.json({ 
+                            message: checked_in === 'TRUE' ? 'Guest data updated (already checked in)' : 'Guest status updated successfully',
+                            showPopup: false 
+                        });
+                    }
+                }
+            );
+        } else if (Food !== undefined) {
+            // อัพเดต Food เท่านั้น
+            db.query(
+                'UPDATE guestinfo SET Food = ? WHERE uuid = ?',
+                [Food, uuid],
+                (err, result) => {
+                    if (err) {
+                        console.error('Error updating guest food:', err);
+                        res.status(500).json({ message: err.message });
+                        return;
+                    }
+
+                    if (result.affectedRows === 0) {
+                        res.status(404).json({ message: 'Guest not found' });
+                        return;
+                    }
+
+                    console.log('Updated Food successfully');
+
+                    // ส่ง event เพื่อ refresh data ในทุกเครื่อง
+                    io.emit('data-updated', { 
+                        type: 'guest-food-changed',
+                        uuid: uuid,
+                        food: Food
+                    });
 
                     res.json({ 
-                        message: 'Guest status updated successfully',
-                        guest: guest,
-                        showPopup: true 
+                        message: 'Guest food preference updated successfully',
+                        food: Food,
+                        showPopup: false  // ไม่ส่ง popup สำหรับการอัพเดต food
                     });
-                });
-            } else {
-                // ถ้าเปลี่ยนเป็น FALSE ไม่ต้องส่ง socket event
-                res.json({ 
-                    message: 'Guest status updated successfully',
-                    showPopup: false 
-                });
-            }
+                }
+            );
+        } else {
+            res.status(400).json({ message: 'No valid fields to update' });
         }
-    );
+    });
 });
 
 // Delete guest endpoint
@@ -192,6 +364,12 @@ app.delete('/api/guests/:uuid', (req, res) => {
                 return;
             }
 
+            // ส่ง event เพื่อ refresh data ในทุกเครื่อง
+            io.emit('data-updated', { 
+                type: 'guest-deleted',
+                uuid: uuid
+            });
+
             res.json({ 
                 message: 'Guest deleted successfully',
                 deletedRows: result.affectedRows 
@@ -210,6 +388,9 @@ io.on('connection', (socket) => {
 });
 
 const PORT = 3001;
-server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+const HOST = '0.0.0.0'; // Listen on all interfaces
+
+server.listen(PORT, HOST, () => {
+    console.log(`Server running on http://${HOST}:${PORT}`);
+    // console.log(`Accessible from network at http://192.168.1.137:${PORT}`);
 });

@@ -109,8 +109,31 @@ function LandingPage() {
 
     // เพิ่ม effect สำหรับทดสอบ popup
     useEffect(() => {
-        // สร้าง socket connection
-        const socket = io('http://localhost:3001');
+        // สร้าง socket connection - ใช้ environment variable หรือ default
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+        const socketURL = apiUrl.replace('/api', ''); // ลบ /api ออกสำหรับ socket.io
+        console.log('Landing page connecting to socket at:', socketURL);
+        
+        const socket = io(socketURL, {
+            transports: ['polling', 'websocket'], // ใช้ polling ก่อน แล้วค่อย upgrade เป็น websocket
+            cors: {
+                origin: "*",
+                methods: ["GET", "POST"]
+            }
+        });
+
+        // Event handlers
+        socket.on('connect', () => {
+            console.log('Landing page socket connected successfully');
+        });
+
+        socket.on('connect_error', (error) => {
+            console.log('Landing page socket connection error:', error);
+        });
+
+        socket.on('disconnect', (reason) => {
+            console.log('Landing page socket disconnected:', reason);
+        });
 
         socket.on('guest-checkin', (guest) => {
             const newGuest = { ...guest, id: Date.now() };
@@ -241,7 +264,7 @@ function LandingPage() {
                             {/* <h1 className="text-5xl font-bold mb-4">GALA DINNER 2025</h1> */}
                             <h2 className="text-5xl font-bold mb-4">50th Anniversary Celebration</h2>
                             <div className="text-2xl font-bold">
-                                <p className="mb-2">Grand Ballroom 2 & 3, Holliday Inn & Suites Rayong City Centre</p>
+                                <p className="mb-2">Grand Ballroom 2 & 3, Holiday Inn & Suites Rayong City Centre</p>
                                 <p>21 August 2025 5.00 PM - 10.00 PM</p>
                             </div>
                         </div>
